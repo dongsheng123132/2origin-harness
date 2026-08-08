@@ -40,7 +40,14 @@ The 2Origin spec says a computer should be *"model-swappable, state-persistent, 
 - **The controls are ours.** Tail-truncation, a self-made summary and a hand-written lexical RAG are not mem0 / Letta / LangMem / Zep. "Beats a transcript" is the claim; "beats memory systems" is not.
 - **The corpus is this project's own credentials.** External validity is untested.
 
-The harness reports its own failures instead of absorbing them: it counts `finish_reason=length` truncations and re-runs those calls at a larger cap, and it checks the empty-context floor for question leakage — an earlier run was caught scoring 50% on a chance-25% metric, and the report declared those metrics unusable rather than quietly keeping the number.
+**Four bugs we caught in our own scorer this round.** Nobody writes a scorer for the scorer, so we publish ours:
+
+1. **Leakage — the floor arm scored 3/3.** Not position bias: *length*. The target task had the longest fields, so "pick the longest option" won. Fixed by length-matching distractors and rotating the correct position; the floor fell to 0%. An automatic check now declares any metric unusable if the empty-context arm beats chance by more than 25pp.
+2. **We throttled our own control group.** The summary arm was told "at most N characters" and wrote 2,735 of its 9,635 budget. Given a lower bound too, it filled the budget and jumped 26.7% → 60.0%. We nearly declared victory over a control we had gagged.
+3. **An empty summary got cached.** One merge call returned empty content; the empty string was written to cache, so every later run silently used a blank control while the report still said "summary arm". Now short outputs throw, and bad caches are rejected and deleted.
+4. **One `ECONNRESET` killed a 474-call experiment.** Now: exponential backoff on transport errors and 5xx/429; 4xx throws immediately, because retrying an auth error only hides it.
+
+Plus one inherited from v0.2: the scorer counted its own `max_tokens` truncation as a wrong answer. Truncated calls are now re-run at 3× cap and the repair count is printed — **repairing without saying so is the same disease as truncating without saying so.**
 
 ```bash
 node bench/shadowwork-bench-live.mjs --dry-run   # free, offline: shows the payloads and questions
