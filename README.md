@@ -26,6 +26,8 @@ learn     Learning: distill experience as candidate → verified
 
 ## Quick start
 
+**5-minute walkthrough: [QUICKSTART.md](QUICKSTART.md)** — runs the full v0.2 loop with real output.
+
 ```bash
 # No install — just Node >=18
 
