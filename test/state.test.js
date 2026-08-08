@@ -45,7 +45,7 @@ test('addLearning 默认 candidate，promote 才 verified', () => {
   const s = createState({ id: 't4', goal: 'x' });
   addLearning(s, '一次成功不是真理', 0.5);
   assert.equal(s.learnings[0].status, 'candidate', '新经验必须是 candidate');
-  promoteLearning(s, '一次成功不是真理', 0.9);
+  promoteLearning(s, '一次成功不是真理', { confidence: 0.9, evidence: 'evidence/lesson.md' });
   assert.equal(s.learnings[0].status, 'verified');
   assert.equal(s.learnings[0].confidence, 0.9);
 });

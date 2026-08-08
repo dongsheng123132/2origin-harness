@@ -5,7 +5,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createState, saveState, readState, contentHash, recheckSource, detectActor, addFact } from '../lib/state.js';
+import { createState, saveState, readState, contentHash, recheckSource, detectActor, addFact, addLearning, promoteLearning, deprecateLearning } from '../lib/state.js';
 
 function tmp(tag) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `2o-v02-${tag}-`));
@@ -81,4 +81,42 @@ test('createState 带 content_hash 和 actor', () => {
   const s = createState({ id: 't', goal: 'x' });
   assert.ok(s.content_hash && s.content_hash.length === 64, 'content_hash 是 sha256 hex');
   assert.ok(s.actor && s.actor.harness, 'actor 必须有 harness');
+});
+
+// ── 学堂晋升门槛（RFC-0000 §10 问题 4）──
+
+test('晋升门槛：置信度不足 → 拒绝晋升', () => {
+  const s = createState({ id: 't', goal: 'x' });
+  addLearning(s, '低置信度经验', 0.5); // 低于默认门槛 0.7
+  const r = promoteLearning(s, '低置信度经验');
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 'low_confidence');
+  assert.equal(s.learnings[0].status, 'candidate', '低置信度不能晋升');
+});
+
+test('晋升门槛：高置信度 + 可复核证据 → 晋升', () => {
+  const s = createState({ id: 't', goal: 'x' });
+  addLearning(s, '发布文档要带 changelog', 0.9);
+  const r = promoteLearning(s, '发布文档要带 changelog', { evidence: 'docs/release-guide.md' });
+  assert.equal(r.ok, true);
+  assert.equal(s.learnings[0].status, 'verified');
+  assert.equal(s.learnings[0].evidence, 'docs/release-guide.md');
+});
+
+test('晋升门槛：evidence 不可复核 → 拒绝晋升', () => {
+  const s = createState({ id: 't', goal: 'x' });
+  addLearning(s, '经验', 0.9);
+  const r = promoteLearning(s, '经验', { evidence: '就是我说的' });
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 'no_evidence');
+  assert.equal(s.learnings[0].status, 'candidate');
+});
+
+test('过时经验标记 deprecated，不硬删', () => {
+  const s = createState({ id: 't', goal: 'x' });
+  addLearning(s, '旧经验', 0.9);
+  promoteLearning(s, '旧经验', { evidence: 'docs/old.md' });
+  const r = deprecateLearning(s, '旧经验');
+  assert.equal(r.ok, true);
+  assert.equal(s.learnings[0].status, 'deprecated');
 });

@@ -75,11 +75,21 @@ function main() {
       if (!stateFile || !lesson) { console.error('需要 --state 和 --lesson'); process.exit(1); }
       const st = readState(stateFile);
       if (!st) { console.error('状态不可读'); process.exit(1); }
-      if (opt('--promote')) promoteLearning(st, lesson);
-      else addLearning(st, lesson, parseFloat(opt('--confidence') || '0.5'));
-      const r = saveState(stateFile, st, { expect: opt('--expect') || null });
-      if (!r.ok) { console.error(`❌ ${r.reason}`); process.exit(1); }
-      console.log(`✅ 已沉淀 learning（${opt('--promote') ? 'verified' : 'candidate'}）: ${lesson} [${r.status}]`);
+      if (opt('--promote')) {
+        const pr = promoteLearning(st, lesson, {
+          confidence: opt('--confidence') != null ? parseFloat(opt('--confidence')) : null,
+          evidence: opt('--evidence') || null
+        });
+        if (!pr.ok) { console.error(`❌ 晋升被拒（${pr.status}）: ${pr.reason}`); process.exit(1); }
+        const r = saveState(stateFile, st, { expect: opt('--expect') || null });
+        if (!r.ok) { console.error(`❌ ${r.reason}`); process.exit(1); }
+        console.log(`✅ 已晋升 verified: ${lesson} [${r.status}]`);
+      } else {
+        addLearning(st, lesson, parseFloat(opt('--confidence') || '0.5'));
+        const r = saveState(stateFile, st, { expect: opt('--expect') || null });
+        if (!r.ok) { console.error(`❌ ${r.reason}`); process.exit(1); }
+        console.log(`✅ 已沉淀 learning（candidate）: ${lesson} [${r.status}]`);
+      }
       break;
     }
     default:
