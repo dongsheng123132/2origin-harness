@@ -76,6 +76,21 @@ node bin/2origin.mjs bugscope --state demo/.../task.origin.json
 
 Three axioms (see `philosophy/bugscope.md` in 2origin-computer): A1 existence≠verification, A2 self-proof invalid, A3 judge/decider separation.
 
+## Trust Lane (RFC-0001 §3)
+
+Southbridge accepts standard `trust.credential` (`proof_of_read`) for medium/high risk writes:
+
+```js
+act({
+  verb: 'file.write', relpath: 'demo/out.md', content: 'new',
+  credentials: [{ kind: 'trust.credential', type: 'proof_of_read', target: 'demo/out.md', value: sha256ofCurrent }],
+  via: 'cli'   // channel marker (RFC-0001 §3.3)
+})
+// → status: 'done', approval: 'proof_of_read', via: 'cli'
+```
+
+The credential proves *you read the current content* — not "someone approved you". A headless agent can produce it itself; a stale hash is auto-rejected.
+
 ## Session hooks (RFC-0005 §3.4)
 
 Cross-harness, no binding to Claude Code / Codex:

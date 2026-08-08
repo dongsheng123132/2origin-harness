@@ -82,3 +82,45 @@ test('append 模式：大小累加正确', () => {
   assert.equal(res.evidence.size_bytes, 5); // 2 + 3
   assert.equal(fs.readFileSync(path.join(root, 'demo/log.md'), 'utf8'), 'aabbb');
 });
+
+// ── Trust Lane（RFC-0001 §3）──
+
+test('Trust Lane：proof_of_read 凭据批准覆盖写', () => {
+  const root = tmp('por');
+  const act = southbridge(root);
+  fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'demo/out.md'), 'old');
+  const sha = crypto.createHash('sha256').update('old').digest('hex');
+  // 标准 trust.credential
+  const res = act({
+    verb: 'file.write', relpath: 'demo/out.md', content: 'new',
+    credentials: [{ kind: 'trust.credential', type: 'proof_of_read', target: 'demo/out.md', value: sha }],
+    via: 'test'
+  });
+  assert.equal(res.status, 'done');
+  assert.equal(res.approval, 'proof_of_read');
+  assert.equal(res.via, 'test', '通道标记要记录');
+  assert.equal(fs.readFileSync(path.join(root, 'demo/out.md'), 'utf8'), 'new');
+});
+
+test('Trust Lane：错误 proof_of_read 拒绝', () => {
+  const root = tmp('porbad');
+  const act = southbridge(root);
+  fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'demo/out.md'), 'old');
+  const res = act({
+    verb: 'file.write', relpath: 'demo/out.md', content: 'new',
+    credentials: [{ kind: 'trust.credential', type: 'proof_of_read', target: 'demo/out.md', value: 'wrong' }]
+  });
+  assert.equal(res.status, 'requires_approval');
+  assert.equal(res.approval, 'proof_of_read');
+});
+
+test('Trust Lane：无凭据覆盖 → requires_approval', () => {
+  const root = tmp('noapprove');
+  const act = southbridge(root);
+  fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'demo/out.md'), 'old');
+  const res = act({ verb: 'file.write', relpath: 'demo/out.md', content: 'new' });
+  assert.equal(res.status, 'requires_approval');
+});
