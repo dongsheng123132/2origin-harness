@@ -62,6 +62,20 @@ node bin/2origin.mjs bundle          # current task full + carryover, says what 
 | Verify | `lib/verify.js` — artifacts exist? facts sourced **and verifiable** (recheckSource) |
 | Learning (学堂) | `learn` — candidate → verified, one success is not a permanent truth |
 
+## Session hooks (RFC-0005 §3.4)
+
+Cross-harness, no binding to Claude Code / Codex:
+
+```bash
+# On session start: compile the benjing bundle (inject credentials)
+node hooks/session-start.mjs    # outputs Claude Code additionalContext JSON if detected, else plain text
+
+# On session end: reconcile every credential by content_hash (no change = no write)
+node hooks/session-end.mjs      # [unchanged]/[written] per state file
+```
+
+`session-end` catches "dirty" writes — content changed without updating `content_hash` → it writes the new hash and bumps version.
+
 ## Benjing v0.2 (RFC-0005)
 
 Implements the measured v0.2 mechanisms:
