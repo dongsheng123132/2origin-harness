@@ -113,6 +113,7 @@ Implements the measured v0.2 mechanisms:
 - **Verifiable sources** — `recheckSource` rejects natural-language assertions ("trust me"); a verified fact's source must cite a file path, command, or test-case ID.
 - **Actor provenance** — every state records `actor {harness, model, session_id, at}`; model is `unobserved` when it can't be observed (never fabricated).
 - **Learning lifecycle** — candidate → verified, gated: confidence ≥ 0.7 AND verifiable evidence, never auto-promoted. Deprecated is marked, not hard-deleted.
+- **Auto-forgetting (bugscope A5)** — `autoDeprecate` downgrades verified facts/learnings past their freshness window; `refreshFact` renews one when re-validated. Correct forgetting is what makes long-term accumulation trustworthy.
 
 Run `npm test` (24 tests) to see all of it verified.
 

@@ -5,7 +5,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createState, saveState, readState, contentHash, recheckSource, detectActor, addFact, addLearning, promoteLearning, deprecateLearning } from '../lib/state.js';
+import { createState, saveState, readState, contentHash, recheckSource, detectActor, addFact, addLearning, promoteLearning, deprecateLearning, autoDeprecate, refreshFact } from '../lib/state.js';
 
 function tmp(tag) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `2o-v02-${tag}-`));
@@ -119,4 +119,37 @@ test('过时经验标记 deprecated，不硬删', () => {
   const r = deprecateLearning(s, '旧经验');
   assert.equal(r.ok, true);
   assert.equal(s.learnings[0].status, 'deprecated');
+});
+
+// ── 自动遗忘（bugscope A5：验证会衰减）──
+
+test('自动遗忘：超保鲜期 verified learning → 降级 deprecated', () => {
+  const s = createState({ id: 't', goal: 'x' });
+  const old = new Date(Date.now() - 40 * 24 * 3600 * 1000).toISOString(); // 40 天前
+  s.learnings = [{ lesson: '过期经验', confidence: 0.9, status: 'verified', promoted_at: old }];
+  const r = autoDeprecate(s, { maxAgeMs: 30 * 24 * 3600 * 1000 });
+  assert.equal(r.length, 1, '要降级 1 条');
+  assert.equal(s.learnings[0].status, 'deprecated');
+  assert.ok(s.learnings[0].deprecated_reason.includes('保鲜期'));
+});
+
+test('自动遗忘：保鲜期内 verified → 保留', () => {
+  const s = createState({ id: 't', goal: 'x' });
+  const fresh = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(); // 5 天前
+  s.learnings = [{ lesson: '新鲜经验', confidence: 0.9, status: 'verified', promoted_at: fresh }];
+  const r = autoDeprecate(s, { maxAgeMs: 30 * 24 * 3600 * 1000 });
+  assert.equal(r.length, 0, '新鲜的不该降级');
+  assert.equal(s.learnings[0].status, 'verified');
+});
+
+test('刷新保鲜期：refreshFact 后不再被降级', () => {
+  const s = createState({ id: 't', goal: 'x' });
+  const old = new Date(Date.now() - 40 * 24 * 3600 * 1000).toISOString();
+  addFact(s, '旧事实', 'evidence/old.md');
+  s.facts[0].when = old;
+  // 刷新
+  refreshFact(s, '旧事实');
+  const r = autoDeprecate(s, { maxAgeMs: 30 * 24 * 3600 * 1000 });
+  assert.equal(r.length, 0, '刷新过的不该降级');
+  assert.ok(!s.facts[0].deprecated, '刷新过的不该标 deprecated');
 });
