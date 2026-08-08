@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node bin/2origin.mjs",
-    "test": "node --test test/"
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"
