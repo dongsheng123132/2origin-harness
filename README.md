@@ -62,6 +62,20 @@ node bin/2origin.mjs bundle          # current task full + carryover, says what 
 | Verify | `lib/verify.js` — artifacts exist? facts sourced **and verifiable** (recheckSource) |
 | Learning (学堂) | `learn` — candidate → verified, one success is not a permanent truth |
 
+## Bugscope (philosophy → executable)
+
+The "bug 透视镜" as a runnable checker: examines claims for shadow/object confusion.
+
+```bash
+# Audit a claim with/without evidence
+node bin/2origin.mjs bugscope --claim "标记存在=>崩溃"                 # → ⚠️ A1 hit
+node bin/2origin.mjs bugscope --claim "文件已写" --evidence "stat+sha256"  # → ✅ clean
+# Audit a whole state file's facts
+node bin/2origin.mjs bugscope --state demo/.../task.origin.json
+```
+
+Three axioms (see `philosophy/bugscope.md` in 2origin-computer): A1 existence≠verification, A2 self-proof invalid, A3 judge/decider separation.
+
 ## Session hooks (RFC-0005 §3.4)
 
 Cross-harness, no binding to Claude Code / Codex:

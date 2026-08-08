@@ -15,6 +15,7 @@ import { buildContext } from '../lib/northbridge.js';
 import { southbridge } from '../lib/southbridge.js';
 import { verify } from '../lib/verify.js';
 import { buildBundle } from '../lib/bundle.js';
+import { bugscope } from '../lib/bugscope.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(here, '..');
@@ -67,6 +68,21 @@ function main() {
       const res = verify(stateFile);
       console.log(res.verdict);
       if (res.failed.length) { res.failed.forEach(f => console.log('  ✗', f)); process.exit(1); }
+      break;
+    }
+    case 'bugscope': {
+      const stateFile = opt('--state');
+      const claim = opt('--claim');
+      const evidence = opt('--evidence');
+      if (stateFile) {
+        const st = readState(stateFile);
+        if (!st) { console.error('状态不可读'); process.exit(1); }
+        console.log(JSON.stringify(bugscope({ state: st }), null, 2));
+      } else if (claim != null) {
+        console.log(JSON.stringify(bugscope({ events: [{ id: 'cli', claim, evidence: evidence || null, label: claim.slice(0, 30) }] }), null, 2));
+      } else {
+        console.error('需要 --state 或 --claim [--evidence]'); process.exit(1);
+      }
       break;
     }
     case 'learn': {
