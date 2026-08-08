@@ -17,7 +17,7 @@ test('createState 需要 id 和 goal', () => {
 
 test('createState 产出符合 2Origin 铁律的空状态', () => {
   const s = createState({ id: 't1', goal: '测试' });
-  assert.equal(s.spec, '2origin/0.1');
+  assert.equal(s.spec, '2origin/0.2');
   assert.equal(s.kind, 'task.origin');
   assert.equal(s.version, 1);
   assert.deepEqual(s.facts, []);
@@ -36,9 +36,9 @@ test('saveState 版本递增 + 刷 updated_at', () => {
 
 test('addFact 必须带 source，verified 默认 true', () => {
   const s = createState({ id: 't3', goal: 'x' });
-  addFact(s, '地球是圆的', '实验');
+  addFact(s, '地球是圆的', 'science/round-earth.md');
   assert.equal(s.facts[0].verified, true);
-  assert.equal(s.facts[0].source, '实验');
+  assert.equal(s.facts[0].source, 'science/round-earth.md');
 });
 
 test('addLearning 默认 candidate，promote 才 verified', () => {

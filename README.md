@@ -50,12 +50,23 @@ node bin/2origin.mjs learn --state demo/my-task/task.origin.json --promote --les
 
 | 2Origin layer | This repo |
 |---|---|
-| State (本境) | `lib/state.js` — task.origin read/write, versioning, candidate learning |
+| State (本境) | `lib/state.js` — task.origin read/write, **v0.2: content-hash optimistic lock + verifiable sources + actor provenance** (RFC-0005) |
 | World representation (本象) | the `task.origin.json` itself — State + Facts, not transcripts |
 | Northbridge (知) | `lib/northbridge.js` — compiles relevant state into context, not the whole disk |
 | Southbridge (行) | `lib/southbridge.js` — whitelisted, audited write; status decided by post-write observation |
-| Verify | `lib/verify.js` — artifacts exist? facts sourced? |
+| Verify | `lib/verify.js` — artifacts exist? facts sourced **and verifiable** (recheckSource) |
 | Learning (学堂) | `learn` — candidate → verified, one success is not a permanent truth |
+
+## Benjing v0.2 (RFC-0005)
+
+Implements the measured v0.2 mechanisms:
+
+- **content-hash optimistic lock** — `saveState(file, state, {expect})` refuses writes when `expect` doesn't match the current hash; content unchanged → no write, version doesn't rise.
+- **Verifiable sources** — `recheckSource` rejects natural-language assertions ("trust me"); a verified fact's source must cite a file path, command, or test-case ID.
+- **Actor provenance** — every state records `actor {harness, model, session_id, at}`; model is `unobserved` when it can't be observed (never fabricated).
+- **Learning lifecycle** — candidate → verified, never auto-promoted.
+
+Run `npm test` (24 tests) to see all of it verified.
 
 ## Conformance status
 

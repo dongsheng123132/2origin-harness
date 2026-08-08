@@ -32,8 +32,8 @@ function main() {
       if (!goal) { console.error('需要 --goal'); process.exit(1); }
       const file = path.join(ROOT, 'demo', `${id}`, 'task.origin.json');
       const st = createState({ id, title: opt('--title'), goal });
-      saveState(file, st);
-      console.log(`✅ 已建状态: ${file}`);
+      const r = saveState(file, st);
+      console.log(`✅ 已建状态: ${file} (version ${r.version}, hash ${st.content_hash.slice(0,12)}…)`);
       break;
     }
     case 'ctx': {
@@ -68,8 +68,9 @@ function main() {
       if (!st) { console.error('状态不可读'); process.exit(1); }
       if (opt('--promote')) promoteLearning(st, lesson);
       else addLearning(st, lesson, parseFloat(opt('--confidence') || '0.5'));
-      saveState(stateFile, st);
-      console.log(`✅ 已沉淀 learning（${opt('--promote') ? 'verified' : 'candidate'}）: ${lesson}`);
+      const r = saveState(stateFile, st, { expect: opt('--expect') || null });
+      if (!r.ok) { console.error(`❌ ${r.reason}`); process.exit(1); }
+      console.log(`✅ 已沉淀 learning（${opt('--promote') ? 'verified' : 'candidate'}）: ${lesson} [${r.status}]`);
       break;
     }
     default:

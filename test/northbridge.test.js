@@ -35,8 +35,8 @@ test('北桥：有状态时返回 current_state 和 next_steps', () => {
 test('北桥：按 goal 相关性选 facts，不全部进 Context', () => {
   const root = tmp('rel');
   const st = createState({ id: 'x', goal: '写销售报告' });
-  addFact(st, '第二季度销售额 800 万', '报表');
-  addFact(st, '服务器 IP 是 10.0.0.1', '运维');
+  addFact(st, '第二季度销售额 800 万', 'reports/Q2-2026.json');
+  addFact(st, '服务器 IP 是 10.0.0.1', 'cat ~/.uking/device.json');
   fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
   saveState(path.join(root, 'demo/x/task.origin.json'), st);
 

@@ -27,7 +27,7 @@ test('验证：artifact 真实存在 → PASS', () => {
   const root = tmp('real');
   const st = createState({ id: 'x', goal: 'g' });
   st.artifacts = ['demo/real.md'];
-  st.facts = [{ claim: 'f', verified: true, source: 'src', when: 'now' }];
+  st.facts = [{ claim: 'f', verified: true, source: 'evidence/real.md', when: 'now' }];
   fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
   fs.writeFileSync(path.join(root, 'demo/real.md'), 'x');
   saveState(path.join(root, 'demo/x/task.origin.json'), st);
