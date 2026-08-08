@@ -39,7 +39,10 @@ function main() {
     }
     case 'ctx': {
       const goal = opt('--goal') || '继续任务';
-      const bundle = buildContext(ROOT, goal);
+      const budget = parseInt(opt('--budget') || '30000', 10);
+      const scope = (opt('--scope') || '').split(',').filter(Boolean);
+      // 标准 context.request → context.bundle（RFC-0000 §7）
+      const bundle = buildContext(ROOT, { goal, scope, budget: { tokens: budget } });
       console.log(JSON.stringify(bundle, null, 2));
       break;
     }

@@ -58,7 +58,7 @@ node bin/2origin.mjs bundle          # current task full + carryover, says what 
 | State (本境) | `lib/state.js` — task.origin read/write, **v0.2: content-hash optimistic lock + verifiable sources + actor provenance** (RFC-0005) |
 | World representation (本象) | the `task.origin.json` itself — State + Facts, not transcripts |
 | Northbridge (知) | `lib/northbridge.js` — compiles relevant state into context, not the whole disk |
-| Southbridge (行) | `lib/southbridge.js` — whitelisted, audited write; status decided by post-write observation |
+| Southbridge (行) | `lib/southbridge.js` — whitelisted, audited write; **risk-tiered (low/medium/high) + approval (auto / expect_sha256 optimistic lock / human confirm)**; status decided by post-write observation |
 | Verify | `lib/verify.js` — artifacts exist? facts sourced **and verifiable** (recheckSource) |
 | Learning (学堂) | `learn` — candidate → verified, one success is not a permanent truth |
 

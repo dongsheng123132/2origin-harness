@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { southbridge } from '../lib/southbridge.js';
 
 function tmp(tag) {
@@ -45,13 +46,31 @@ test('南桥审计：写 + 越权都留痕', () => {
 test('南桥写后观察：内容不匹配则 failed', () => {
   const root = tmp('fail');
   const act = southbridge(root);
-  // 预先创建同大小文件，制造"写了但大小不符"场景
+  // 预先创建文件，制造覆盖场景（medium risk）
   fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
   fs.writeFileSync(path.join(root, 'demo/out.md'), 'hiiii'); // 5 字节
-  const res = act({ verb: 'file.write', relpath: 'demo/out.md', content: 'hello' }); // 也是 5 字节
+  // 先看当前 sha256 做乐观锁
+  const sha = crypto.createHash('sha256').update('hiiii').digest('hex');
+  const res = act({ verb: 'file.write', relpath: 'demo/out.md', content: 'hello', expect_sha256: sha });
   // 同大小会被判 done——这是当前实现的边界（不检测内容差异，只检测大小）
   assert.equal(res.status, 'done');
   assert.equal(fs.readFileSync(path.join(root, 'demo/out.md'), 'utf8'), 'hello');
+});
+
+test('南桥：覆盖已存在文件 = medium risk，需批准', () => {
+  const root = tmp('medium');
+  const act = southbridge(root);
+  fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'demo/out.md'), 'old');
+  // 不带 expect/confirm → requires_approval
+  const res = act({ verb: 'file.write', relpath: 'demo/out.md', content: 'new' });
+  assert.equal(res.status, 'requires_approval');
+  assert.equal(res.risk, 'medium');
+  // 用 expect_sha256 批准 → done
+  const sha = crypto.createHash('sha256').update('old').digest('hex');
+  const ok = act({ verb: 'file.write', relpath: 'demo/out.md', content: 'new', expect_sha256: sha });
+  assert.equal(ok.status, 'done');
+  assert.equal(fs.readFileSync(path.join(root, 'demo/out.md'), 'utf8'), 'new');
 });
 
 test('append 模式：大小累加正确', () => {
