@@ -124,3 +124,26 @@ test('Trust Lane：无凭据覆盖 → requires_approval', () => {
   const res = act({ verb: 'file.write', relpath: 'demo/out.md', content: 'new' });
   assert.equal(res.status, 'requires_approval');
 });
+
+// ── A4（bugscope）：审计失败不静默 ──
+
+test('A4：审计正常 → audit_ok true', () => {
+  const root = tmp('auditok');
+  const act = southbridge(root);
+  const res = act({ verb: 'file.write', relpath: 'demo/ok.md', content: 'x' });
+  assert.equal(res.status, 'done');
+  assert.equal(res.audit_ok, true, '审计成功要标 true');
+});
+
+test('A4：审计被阻断（audit 目录被占）→ audit_ok false', () => {
+  const root = tmp('auditfail');
+  // 用白名单外路径触发 denied 也会审计；这里构造审计写失败：
+  // 用一个无法写的 auditFile（目录已存在但作为文件被占）
+  const blocked = path.join(root, 'audit.log');
+  // 先让 audit.log 是一个目录（appendFile 会失败）
+  fs.mkdirSync(blocked, { recursive: true });
+  const act = southbridge(root, { auditFile: 'audit.log' });
+  const res = act({ verb: 'file.write', relpath: 'demo/ok.md', content: 'x' });
+  assert.equal(res.status, 'done', '动作本身成功（审计失败不阻断写）');
+  assert.equal(res.audit_ok, false, '审计失败要标 false，让调用方知道承诺失效');
+});
