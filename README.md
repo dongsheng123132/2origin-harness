@@ -74,7 +74,7 @@ node bin/2origin.mjs bugscope --claim "文件已写" --evidence "stat+sha256"  #
 node bin/2origin.mjs bugscope --state demo/.../task.origin.json
 ```
 
-Three axioms (see `philosophy/bugscope.md` in 2origin-computer): A1 existence≠verification, A2 self-proof invalid, A3 judge/decider separation.
+Five axioms (see `philosophy/bugscope.md` in 2origin-computer): A1 existence≠verification, A2 self-proof invalid, A3 judge/decider separation, A4 absence doesn't speak (promises fail silently), A5 verification decays (world changes, verified doesn't revert). Also `bugscope({ promises })` and `bugscope({ worldChanged })`.
 
 ## Trust Lane (RFC-0001 §3)
 
