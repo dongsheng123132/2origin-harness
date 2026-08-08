@@ -1,0 +1,17 @@
+{
+  "name": "2origin-harness",
+  "version": "0.1.0",
+  "description": "A minimal, dependency-free reference harness for the 2Origin Computer Architecture. Model-swappable, state-persistent, audited writes.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "2origin": "./bin/2origin.mjs"
+  },
+  "scripts": {
+    "start": "node bin/2origin.mjs",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
