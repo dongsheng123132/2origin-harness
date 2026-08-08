@@ -1,1 +1,6 @@
-.backups/\naudit.log\nnode_modules/
+.backups/
+audit.log
+node_modules/
+bench/cache/
+bench/results-live.bak.json
+bench/*.log

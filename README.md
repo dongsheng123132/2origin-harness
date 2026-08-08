@@ -10,6 +10,45 @@ This is a **reference implementation** of the 2Origin architecture — not a clo
 
 The 2Origin spec says a computer should be *"model-swappable, state-persistent, action-portable, learning-compounding."* This repo is the smallest thing that does all of that, with **zero dependencies** (pure Node, stdlib only) so it's auditable and portable.
 
+## Benchmark: does structured state actually beat a transcript?
+
+`bench/shadowwork-bench-live.mjs` — same model, same endpoint, same prompt. The **only** variable is what the context window is preloaded with. The corpus is real: 9 real task states (131 verified facts) on one side, 5.5 MB of the real session transcripts that actually did the work on the other. Ground truth is read from disk fields; distractors are drawn from *other real tasks*, never invented.
+
+`deepseek-v4-flash`, temperature 0, 2026-08-09. 474 calls, 0 errors, 0 truncations. Full write-up with Wilson 95% intervals: **[`bench/RESULTS-v3.md`](bench/RESULTS-v3.md)**
+
+| arm | input tokens | multiple choice<br>n=15, chance 25% | fact true/false<br>n=40, chance 50% | two-hop<br>n=23, chance 50% | asks back? |
+|---|---|---|---|---|---|
+| **2origin** (state bundle) | **5,191** | **100.0%** | **97.5%** | 64.3% | no |
+| summary (simulated `/compact`) | 5,611 | 60.0% | 45.0% | 58.0% | no |
+| rag (lexical retrieval over transcript) | 4,586 | 46.7% | 60.0% | 71.4% | no |
+| transcript (tail-truncated, equal budget) | 4,083 | 46.7% | 47.5% | 62.1% | no |
+| transcript-10x (7.8× the budget) | 40,397 | 53.3% | 35.0% | 61.2% | no |
+| none (empty context — the floor) | 231 | 33.3% | 47.5% | 63.8% | **yes** |
+
+**What this shows**
+
+- **Factual recall: state 97.5% [87.1, 99.6] vs the strongest control (rag) 60.0% [44.6, 73.7] — Wilson 95% intervals do not overlap.** At 1/8 the tokens of the 10× transcript arm.
+- **Summarization loses the half you need.** The `/compact`-style summary arm scores 45.0% on fact attribution — below chance, and below feeding the model *nothing at all* (47.5%). It keeps "what we were doing" and drops "which conclusion was already verified".
+- **More transcript is worse, not merely wasteful.** 7.8× the input tokens scores 35.0% [22.1, 50.5] — significantly *below* chance. The model reliably surfaces stale, retracted, or other-task assertions from the pile. That is worse than missing information, because it comes with confidence.
+- **Only the empty-context arm asks a clarifying question.** All five context-fed arms answer straight away. Missing information does not surface as uncertainty; it surfaces as confident wrong answers about whatever was most recently being worked on.
+
+**What this does NOT show** — stated here because a benchmark that hides its own limits is a defect, not a result:
+
+- **Nothing about reasoning — the two-hop probe failed and is retracted.** It was added to break the open-book ceiling. All six arms land within 58.0–71.4%, intervals overlapping, and the empty-context floor (63.8%) is 0.5pp from the state arm (64.3%). Diagnosis: the question is answerable by topical similarity — facts and next-steps of the same task share vocabulary — so it measures topic overlap, not state attribution. It stays in the table for transparency and supports no conclusion. The open-book ceiling remains unsolved.
+- **The 100% is open-book.** The facts are written verbatim in the bundle. This measures *whether state survives delivery intact*, not whether the model is smart. The information is in the controls' low scores, not the state arm's high one.
+- **Single model, single target task, single run.** At near-identical payload the transcript arm moved 13.3 points between two runs (60.0% → 46.7%). Small differences are unreadable without resampling and confidence intervals.
+- **The controls are ours.** Tail-truncation, a self-made summary and a hand-written lexical RAG are not mem0 / Letta / LangMem / Zep. "Beats a transcript" is the claim; "beats memory systems" is not.
+- **The corpus is this project's own credentials.** External validity is untested.
+
+The harness reports its own failures instead of absorbing them: it counts `finish_reason=length` truncations and re-runs those calls at a larger cap, and it checks the empty-context floor for question leakage — an earlier run was caught scoring 50% on a chance-25% metric, and the report declared those metrics unusable rather than quietly keeping the number.
+
+```bash
+node bench/shadowwork-bench-live.mjs --dry-run   # free, offline: shows the payloads and questions
+node bench/shadowwork-bench-live.mjs             # needs a model endpoint; one full run is ~4.7M input tokens
+```
+
+`bench/corpus.json` pins each transcript by byte count, so a re-run on the same machine is byte-identical. The transcripts themselves are **not** committed — they contain private working content. That makes the transcript arms unreproducible off this machine; it is a deliberate trade, not an oversight.
+
 ## Core loop
 
 ```

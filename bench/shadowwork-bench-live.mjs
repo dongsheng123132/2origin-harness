@@ -49,7 +49,7 @@ const PROJECT_DIR = flag('--project-dir', path.join(os.homedir(), '.claude/proje
 const TRANSCRIPTS = flag('--transcripts', '');       // 逗号分隔的 jsonl 路径；空则自动发现
 const N_FACTS     = parseInt(flag('--facts', '40'), 10);   // 是/否 事实探针总数（真假各半）
 const N_MCFACT    = parseInt(flag('--mc-facts', '10'), 10); // 四选一「哪条是本任务的已验证事实」
-const N_PAIR      = parseInt(flag('--pairs', '12'), 10);    // 两跳题：事实↔下一步是否同属一个任务
+const N_PAIR      = parseInt(flag('--pairs', '32'), 10);    // 两跳题：事实↔下一步是否同属一个任务
 const ARMS        = flag('--arms', '2origin,summary,rag,transcript,transcript-10x,none').split(',').map(s => s.trim()).filter(Boolean);
 const MODEL       = flag('--model', '');
 const BASE        = flag('--base', '');
@@ -123,11 +123,27 @@ function discoverTranscripts(projectDir, taskId) {
   return hits.slice(0, 2).sort((a, b) => a.mtime - b.mtime).map(h => h.file);
 }
 
+// files: 字符串路径，或 {path, bytes}。给了 bytes 就只读前 N 字节——
+// 活着的会话文件每几分钟就变长，不钉字节数两次运行就不是同一个实验。
 function renderTranscript(files) {
   const lines = [];
   for (const f of files) {
+    const fp = typeof f === 'string' ? f : f.path;
+    const cap = typeof f === 'string' ? null : f.bytes;
     let raw;
-    try { raw = fs.readFileSync(f, 'utf8'); } catch { continue; }
+    try {
+      if (cap) {
+        const fd = fs.openSync(fp, 'r');
+        const buf = Buffer.alloc(cap);
+        const n = fs.readSync(fd, buf, 0, cap, 0);
+        fs.closeSync(fd);
+        raw = buf.subarray(0, n).toString('utf8');
+        const lastNl = raw.lastIndexOf('\n');
+        if (lastNl > 0) raw = raw.slice(0, lastNl);   // 丢掉被截断的半行
+      } else {
+        raw = fs.readFileSync(fp, 'utf8');
+      }
+    } catch { continue; }
     for (const l of raw.split('\n')) {
       if (!l.trim()) continue;
       let j; try { j = JSON.parse(l); } catch { continue; }
@@ -155,7 +171,12 @@ function tailChars(text, n) { return text.length <= n ? text : text.slice(text.l
 async function buildSummaryPayload(ep, transcript, budget, tag) {
   fs.mkdirSync(CACHE, { recursive: true });
   const cacheFile = path.join(CACHE, `summary-${tag}-${budget}.txt`);
-  if (fs.existsSync(cacheFile)) return { text: fs.readFileSync(cacheFile, 'utf8'), cached: true, calls: 0 };
+  if (fs.existsSync(cacheFile)) {
+    const cached = fs.readFileSync(cacheFile, 'utf8');
+    if (cached.length >= budget * 0.3) return { text: cached, cached: true, calls: 0 };
+    fs.rmSync(cacheFile);   // 旧版本可能存过空摘要，别继承坏缓存
+    console.log(`\n  ⚠ 缓存里的摘要只有 ${cached.length} 字符，判为坏缓存已删除，重新生成`);
+  }
   if (!ep.base) throw new Error('summary 臂需要模型端点');
 
   const CHUNK = 24000;
@@ -174,13 +195,27 @@ async function buildSummaryPayload(ep, transcript, budget, tag) {
   let calls = chunks.length;
 
   const merged = parts.filter(Boolean).join('\n---\n');
-  const r = await ask(ep,
-    '你在为一个新会话写交接摘要。只输出摘要正文，不要寒暄。',
+  // 目标长度要给下界。只说"不超过 N"会让模型写到 N 的三成就收笔——
+  // 那等于我替对照组把预算浪费掉了，是另一种打稻草人。
+  const mergePrompt =
     `下面是同一个任务各段工作记录的要点。合并成**一份**给新会话看的交接摘要，` +
-    `明确写出：任务目标、当前状态、已确认的事实、下一步。**严格不超过 ${budget} 字符**。\n\n${merged}`,
-    Math.max(4000, Math.floor(budget / 2)));
-  calls++;
-  const text = tailChars(r.text, budget);
+    `明确写出：任务目标、当前状态、**逐条列出已确认的事实**、下一步。\n` +
+    `**长度要求：${Math.floor(budget * 0.85)}～${budget} 字符之间。你有充足预算，不要压缩过头——` +
+    `宁可多列几条已确认的事实，也不要为了短而丢掉细节。**\n\n${merged}`;
+
+  // 推理模型要先花一大截 token 想，再输出 ~budget 字符的正文。cap 给不够
+  // 就会返回空 content（finish_reason=length）。第一次就是这么翻的车。
+  let text = '';
+  for (const cap of [Math.max(24000, budget * 3), Math.max(48000, budget * 6)]) {
+    const r = await ask(ep, '你在为一个新会话写交接摘要。只输出摘要正文，不要寒暄。', mergePrompt, cap);
+    calls++;
+    if (r.text.length >= budget * 0.3) { text = tailChars(r.text, budget); break; }
+    console.log(`\n  ⚠ 摘要合并只回了 ${r.text.length} 字符（finish_reason=${r.finish_reason}），加大 cap 重试`);
+  }
+  // 空摘要绝不能落缓存：那会让之后每一次运行都静默地用一个空对照组，
+  // 而报告上还写着"summary 臂"。宁可炸，也不要悄悄给出假对照。
+  if (text.length < budget * 0.3)
+    throw new Error(`summary 臂生成失败：合并结果只有 ${text.length} 字符（要求 ≥${Math.floor(budget * 0.3)}）。未写缓存。`);
   fs.writeFileSync(cacheFile, text, 'utf8');
   return { text, cached: false, calls };
 }
@@ -236,11 +271,33 @@ function retrieve(idx, query, budget) {
 }
 
 // ─────────────────────── 探针（判据来自磁盘）───────────────────────
+// ── 四选一的两个防泄题措施 ──
+// ① 干扰项按「长度最接近正解」挑：目标任务往往是干得最久的那个，字段最长，
+//    于是"挑最长的那条"就能蒙对——空上下文臂 3/3 全中就是这么来的。
+// ② 正解位置轮流 A→B→C→D：位置有偏好的瞎猜者被钉死在 25%。
+let mcSeq = 0;
+function mkMC(question, truth, pool, key) {
+  const L = String(truth).length;
+  const distract = [...new Set(pool.filter(Boolean).map(String).filter(x => x !== String(truth)))]
+    .sort((a, b) => Math.abs(a.length - L) - Math.abs(b.length - L)).slice(0, 3);
+  if (distract.length < 3) return null;
+  const slot = mcSeq++ % 4;
+  const rest = shuffle(distract);
+  const opts = []; let ri = 0;
+  for (let i = 0; i < 4; i++) opts.push(i === slot ? String(truth) : rest[ri++]);
+  return {
+    type: 'mc', key, answer: 'ABCD'[slot],
+    prompt: `${question}\n只回答一个字母（A/B/C/D），不要解释。\n\n` +
+      opts.map((o, i) => `${'ABCD'[i]}. ${o.slice(0, 300)}`).join('\n')
+  };
+}
+
 function buildProbes(states, targetId, nFacts) {
   const target = states.find(s => s.id === targetId);
   if (!target) die(`找不到任务 ${targetId}`);
   const others = states.filter(s => s.id !== targetId);
   const probes = [];
+  mcSeq = 0;
 
   // ① 三道四选一：目标 / 下一步第一条 / 当前状态。干扰项 = 别的真实任务的同一字段
   const mc = [
@@ -250,15 +307,8 @@ function buildProbes(states, targetId, nFacts) {
   ];
   for (const m of mc) {
     if (!m.truth) continue;
-    const distract = shuffle(m.pool.filter(Boolean).filter(x => x !== m.truth)).slice(0, 3);
-    if (distract.length < 3) continue;
-    const opts = shuffle([m.truth, ...distract]);
-    const answer = 'ABCD'[opts.indexOf(m.truth)];
-    probes.push({
-      type: 'mc', key: m.key, answer,
-      prompt: `${m.q}\n只回答一个字母（A/B/C/D），不要解释。\n\n` +
-        opts.map((o, i) => `${'ABCD'[i]}. ${String(o).slice(0, 300)}`).join('\n')
-    });
+    const p = mkMC(m.q, m.truth, m.pool, m.key);
+    if (p) probes.push(p);
   }
 
   const trueFacts = (target.state.facts || []).filter(f => f.verified).map(f => f.claim);
@@ -268,14 +318,9 @@ function buildProbes(states, targetId, nFacts) {
   //     这一档是为了把「none 臂」压回真正的瞎猜线 —— 三道题的 MC 噪音太大，不能下结论。
   const mcTrue = evenly(trueFacts, N_MCFACT);
   for (let i = 0; i < mcTrue.length; i++) {
-    const distract = shuffle(falseFacts.filter(c => c !== mcTrue[i])).slice(0, 3);
-    if (distract.length < 3) break;
-    const opts = shuffle([mcTrue[i], ...distract]);
-    probes.push({
-      type: 'mc', key: 'mc_fact', answer: 'ABCD'[opts.indexOf(mcTrue[i])],
-      prompt: `下面四条都是真实存在的「已验证事实」，但只有一条属于**当前这个任务**。是哪一条？\n只回答一个字母（A/B/C/D），不要解释。\n\n` +
-        opts.map((o, j) => `${'ABCD'[j]}. ${String(o).slice(0, 300)}`).join('\n')
-    });
+    const p = mkMC('下面四条都是真实存在的「已验证事实」，但只有一条属于**当前这个任务**。是哪一条？',
+                   mcTrue[i], falseFacts, 'mc_fact');
+    if (p) probes.push(p);
   }
 
   // ②b 是/否 事实判别：真假各半。真 = 本任务 verified facts；假 = 别的真实任务的 verified facts
@@ -315,12 +360,8 @@ function buildProbes(states, targetId, nFacts) {
   const nVer = trueFacts.length, nStep = (target.state.next_steps || []).length;
   for (const [q, truth] of [['当前这个任务一共有多少条已验证事实？', nVer],
                             ['当前这个任务的「下一步」列表一共有几条？', nStep]]) {
-    const cand = shuffle([...new Set([truth, truth + 2, Math.max(1, truth - 3), truth * 2])]).slice(0, 4);
-    if (cand.length < 4 || !cand.includes(truth)) continue;
-    probes.push({
-      type: 'mc', key: 'mc_count', answer: 'ABCD'[cand.indexOf(truth)],
-      prompt: `${q}\n只回答一个字母（A/B/C/D），不要解释。\n\n` + cand.map((c, i) => `${'ABCD'[i]}. ${c}`).join('\n')
-    });
+    const p = mkMC(q, truth, [truth + 2, Math.max(1, truth - 3), truth * 2, truth + 5], 'mc_count');
+    if (p) probes.push(p);
   }
 
   // ③ 开放式续作：测「会不会反问」
@@ -352,17 +393,34 @@ function resolveEndpoint() {
   return { base: BASE, key: KEY, model: MODEL };
 }
 
-async function ask(ep, system, user, maxTokens) {
-  const r = await fetch(`${ep.base.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${ep.key}` },
-    body: JSON.stringify({
-      model: ep.model, temperature: 0, max_tokens: maxTokens,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: user }]
-    })
-  });
-  if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
-  const j = await r.json();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function ask(ep, system, user, maxTokens, tries = 4) {
+  // 网络抖一下不该让一次 400 次调用的实验整个崩掉。重试只针对传输层错误与
+  // 5xx/429；4xx（参数错、鉴权错）直接抛，不该靠重试掩盖。
+  let last;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    if (attempt) await sleep(1000 * 2 ** (attempt - 1));
+    let r;
+    try {
+      r = await fetch(`${ep.base.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${ep.key}` },
+        body: JSON.stringify({
+          model: ep.model, temperature: 0, max_tokens: maxTokens,
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }]
+        })
+      });
+    } catch (e) { last = e; continue; }               // 传输层错误 → 重试
+    if (r.ok) return parseReply(await r.json());
+    const body = (await r.text()).slice(0, 200);
+    if (r.status === 429 || r.status >= 500) { last = new Error(`HTTP ${r.status} ${body}`); continue; }
+    throw new Error(`HTTP ${r.status} ${body}`);      // 4xx → 立刻抛
+  }
+  throw new Error(`重试 ${tries} 次仍失败：${last && (last.message || last)}`);
+}
+
+function parseReply(j) {
   const m = j.choices?.[0]?.message || {};
   // 推理模型（deepseek-v4-*）会把 token 花在 reasoning_content 上，content 可能为空。
   // 空 content 不当成"答错"——单独记 no_answer，否则截断会被静默算成低分。
@@ -394,6 +452,61 @@ function gradeFact(reply, answer) {
   return (yes ? '是' : '否') === answer ? 1 : 0;
 }
 
+// 把一臂的逐题结果算成指标。抽成函数是为了 --repair-only 能复用同一套算法——
+// 两份算法迟早会不一致，那时候没人知道该信哪个。
+function scoreRows(rows, payloadChars, repaired = 0) {
+  const by = k => rows.filter(r => r.key === k);
+  const mc = rows.filter(r => r.type === 'mc');
+  const mcField = mc.filter(r => r.key !== 'mc_fact' && r.key !== 'mc_count');
+  const ft = by('fact_true'), ff = by('fact_false');
+  const pSame = by('pair_same'), pDiff = by('pair_diff');
+  const open = rows.find(r => r.type === 'open');
+  const acc = rs => rs.length ? rs.reduce((n, r) => n + gradeMC(r.reply, r.answer), 0) / rs.length : null;
+  const rate = rs => rs.length ? rs.reduce((n, r) => n + gradeFact(r.reply, r.answer), 0) / rs.length : null;
+  const tpr = rate(ft), tnr = rate(ff), psr = rate(pSame), pdr = rate(pDiff);
+  const avg = xs => xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null;
+  return {
+    payload_chars: payloadChars,
+    avg_prompt_tokens: avg(rows.map(r => r.prompt_tokens).filter(x => x != null)),
+    avg_completion_tokens: avg(rows.map(r => r.completion_tokens).filter(x => x != null)),
+    errors: rows.filter(r => r.error).length,
+    no_answer: rows.filter(r => r.no_answer).length,
+    truncated: rows.filter(r => r.finish_reason === 'length').length,
+    repaired,
+    mc_accuracy: acc(mc), mc_field_accuracy: acc(mcField),
+    mc_fact_accuracy: acc(by('mc_fact')), mc_count_accuracy: acc(by('mc_count')),
+    mc_n: mc.length, mc_field_n: mcField.length, mc_fact_n: by('mc_fact').length, mc_count_n: by('mc_count').length,
+    fact_n: ft.length + ff.length, pair_n: pSame.length + pDiff.length,
+    mc_detail: mc.map(r => ({ key: r.key, ok: gradeMC(r.reply, r.answer) === 1, reply: r.reply })),
+    fact_tpr: tpr, fact_tnr: tnr,
+    fact_balanced_accuracy: (tpr != null && tnr != null) ? (tpr + tnr) / 2 : null,
+    pair_same_rate: psr, pair_diff_rate: pdr,
+    pair_balanced_accuracy: (psr != null && pdr != null) ? (psr + pdr) / 2 : null,
+    resume_asked_back: open ? ASK_BACK.test(open.reply) : null,
+    resume_reply: open ? open.reply : null,
+    rows
+  };
+}
+
+// 地板线自查：空上下文那一臂本该贴着瞎猜线。它明显高于瞎猜，只有一种解释——
+// **题目本身泄题**（选项风格/长度就能猜出答案）。那个指标不能用来下结论。
+const CHANCE = { mc_accuracy: 0.25, mc_field_accuracy: 0.25, mc_fact_accuracy: 0.25, mc_count_accuracy: 0.25,
+                 fact_balanced_accuracy: 0.5, pair_balanced_accuracy: 0.5 };
+// n 太小的时候「高于瞎猜」本身就是噪音（n=2 时答对 1 道就是 50%）。
+// 少于 MIN_N 的指标不参与泄题判定，也不该用来下任何结论。
+const MIN_N = 8;
+const METRIC_N = { mc_accuracy: 'mc_n', mc_field_accuracy: 'mc_field_n', mc_fact_accuracy: 'mc_fact_n',
+                   mc_count_accuracy: 'mc_count_n', fact_balanced_accuracy: 'fact_n', pair_balanced_accuracy: 'pair_n' };
+function leakCheck(noneArm, margin = 0.25) {
+  if (!noneArm) return [];
+  return Object.entries(CHANCE)
+    .filter(([k, c]) => noneArm[k] != null && (noneArm[METRIC_N[k]] ?? 0) >= MIN_N && noneArm[k] >= c + margin)
+    .map(([k, c]) => ({ metric: k, none: noneArm[k], chance: c, n: noneArm[METRIC_N[k]] }));
+}
+function tooSmall(arm) {
+  return Object.entries(METRIC_N).filter(([k, nk]) => arm[k] != null && (arm[nk] ?? 0) < MIN_N).map(([k]) => k);
+}
+
 // ─────────────────────────── 主流程 ───────────────────────────
 const states = loadStates(REPO);
 if (!states.length) die(`${REPO}/demo 下没有 task.origin.json`);
@@ -406,9 +519,13 @@ if (TRANSCRIPTS) {
   tFiles = TRANSCRIPTS.split(',').map(s => s.trim()); corpusSource = '命令行 --transcripts';
 } else if (fs.existsSync(corpusFile)) {
   const c = JSON.parse(fs.readFileSync(corpusFile, 'utf8'));
-  tFiles = (c.transcripts || []).filter(f => fs.existsSync(f)); corpusSource = 'corpus.json（钉死）';
-  const missing = (c.transcripts || []).filter(f => !fs.existsSync(f));
-  if (missing.length) console.log(`⚠ corpus.json 里有 ${missing.length} 份会话记录在盘上找不到，本次实验与历史结果不可比：\n  ${missing.join('\n  ')}`);
+  const want = (c.transcripts || []).map(t => typeof t === 'string' ? { path: t, bytes: null } : t);
+  tFiles = want.filter(t => fs.existsSync(t.path));
+  corpusSource = 'corpus.json（钉死）';
+  const missing = want.filter(t => !fs.existsSync(t.path));
+  if (missing.length) console.log(`⚠ corpus.json 里有 ${missing.length} 份会话记录在盘上找不到，本次实验与历史结果不可比：\n  ${missing.map(t => t.path).join('\n  ')}`);
+  const short = tFiles.filter(t => t.bytes && fs.statSync(t.path).size < t.bytes);
+  if (short.length) console.log(`⚠ ${short.length} 份会话记录比钉死的字节数还短（被截断/替换过），与历史结果不可比`);
 } else {
   tFiles = discoverTranscripts(PROJECT_DIR, TASK); corpusSource = '自动发现（⚠ 会漂移，跨次不可比）';
 }
@@ -454,7 +571,7 @@ console.log(`学历仓库 : ${REPO}`);
 console.log(`目标任务 : ${TASK}（${target.state.title || ''}）`);
 console.log(`语料     : ${states.length} 份真实学历，${states.reduce((n, s) => n + (s.state.facts || []).filter(f => f.verified).length, 0)} 条已验证事实`);
 console.log(`对照语料 : ${tFiles.length} 份真实会话记录 → 渲染 ${transcriptText.length} 字符　来源=${corpusSource}`);
-tFiles.forEach(f => console.log(`           ${path.basename(f)} (${fs.statSync(f).size} B)`));
+tFiles.forEach(f => { const fp = typeof f === "string" ? f : f.path; const cap = typeof f === "string" ? null : f.bytes; console.log(`           ${path.basename(fp)} (盘上 ${fs.statSync(fp).size} B${cap ? `，只读前 ${cap} B` : ""})`); });
 const nOf = k => probes.filter(p => p.key === k).length;
 console.log(`探针     : ${probes.filter(p => p.type === 'mc').length} 道四选一（瞎猜 25%）= 状态字段 ${nOf('goal') + nOf('next_step') + nOf('current_state')} + 事实归属 ${nOf('mc_fact')} + 计数 ${nOf('mc_count')}`);
 console.log(`           ${probes.filter(p => p.type === 'fact').length} 道是/否事实判别（真假各半，瞎猜 50%）`);
@@ -492,7 +609,10 @@ console.log(`模型     : ${ep.model} @ ${ep.base}\n`);
 const results = {
   spec: 'shadowwork-bench/0.3', when: new Date().toISOString(),
   repo: REPO, task: TASK, model: ep.model, base: ep.base,
-  corpus: { states: states.length, state_ids: states.map(s => s.id), corpus_source: corpusSource,
+  // 学历也在被别的会话实时改动。语料不能拷进公开仓库（含私人工作内容），
+  // 那就至少把每份的 content_hash 记下来：这次跑的到底是哪一版，事后可辨认。
+  corpus: { states: states.length, corpus_source: corpusSource,
+            state_hashes: Object.fromEntries(states.map(s => [s.id, (s.state.content_hash || '').slice(0, 16)])),
             transcripts: tFiles, transcript_chars: transcriptText.length, bundle_chars: B },
   arms: {}
 };
@@ -523,46 +643,28 @@ for (const arm of ARMS) {
     }
   });
 
-  const mc = rows.filter(r => r.type === 'mc');
-  const mcField = rows.filter(r => r.type === 'mc' && r.key !== 'mc_fact' && r.key !== 'mc_count');
-  const mcFact = rows.filter(r => r.key === 'mc_fact');
-  const mcCount = rows.filter(r => r.key === 'mc_count');
-  const ft = rows.filter(r => r.key === 'fact_true');
-  const ff = rows.filter(r => r.key === 'fact_false');
-  const pSame = rows.filter(r => r.key === 'pair_same');
-  const pDiff = rows.filter(r => r.key === 'pair_diff');
-  const open = rows.find(r => r.type === 'open');
-  const errs = rows.filter(r => r.error);
-  const noAns = rows.filter(r => r.no_answer).length;
-  const truncated = rows.filter(r => r.finish_reason === 'length').length;
-  const ctoks = rows.map(r => r.completion_tokens).filter(x => x != null);
-  const avgThink = ctoks.length ? Math.round(ctoks.reduce((a, b) => a + b, 0) / ctoks.length) : null;
+  // 截断修复：finish_reason=length 说明是我给的 max_tokens 不够，不是模型答错。
+  // temperature=0 下重跑同一条只是把被砍掉的尾巴补出来，所以只补截断的那几条，
+  // 等价于全程用更大的 cap 跑——但便宜得多。补了几条要记账，不能悄悄补。
+  const need = rows.map((r, i) => ({ r, i })).filter(x => x.r.finish_reason === 'length');
+  if (need.length) {
+    process.stdout.write(` 修复 ${need.length} 条截断…`);
+    await pool(need, CONC, async ({ r, i }) => {
+      const p = probes[i];
+      try {
+        const sys = system !== null ? system : SYSTEM_WITH(ctx(p));
+        const r2 = await ask(ep, sys, p.prompt, MAXTOK * 3);
+        Object.assign(rows[i], {
+          reply: r2.text.slice(0, 400), prompt_tokens: r2.prompt_tokens,
+          completion_tokens: r2.completion_tokens, finish_reason: r2.finish_reason,
+          no_answer: r2.text.length === 0, repaired_at_maxtok: MAXTOK * 3
+        });
+      } catch (e) { rows[i].repair_error = String(e.message || e); }
+    });
+  }
 
-  const acc = rs => rs.length ? rs.reduce((n, r) => n + gradeMC(r.reply, r.answer), 0) / rs.length : null;
-  const mcScore = acc(mc), mcFieldScore = acc(mcField), mcFactScore = acc(mcFact), mcCountScore = acc(mcCount);
-  const rate = rs => rs.length ? rs.reduce((n, r) => n + gradeFact(r.reply, r.answer), 0) / rs.length : null;
-  const tpr = rate(ft), tnr = rate(ff);
-  const ba = (tpr != null && tnr != null) ? (tpr + tnr) / 2 : null;
-  const psr = rate(pSame), pdr = rate(pDiff);
-  const pairBa = (psr != null && pdr != null) ? (psr + pdr) / 2 : null;
-  const askedBack = open ? ASK_BACK.test(open.reply) : null;
-  const ptoks = rows.map(r => r.prompt_tokens).filter(x => x != null);
-  const avgPrompt = ptoks.length ? Math.round(ptoks.reduce((a, b) => a + b, 0) / ptoks.length) : null;
-
-  results.arms[arm] = {
-    payload_chars: typeof ctx === 'function' ? `逐题≤${B}` : ctx.length,
-    avg_prompt_tokens: avgPrompt, avg_completion_tokens: avgThink,
-    errors: errs.length, no_answer: noAns, truncated,
-    mc_accuracy: mcScore, mc_field_accuracy: mcFieldScore, mc_fact_accuracy: mcFactScore,
-    mc_count_accuracy: mcCountScore,
-    mc_n: mc.length, fact_n: ft.length + ff.length, pair_n: pSame.length + pDiff.length,
-    mc_detail: mc.map(r => ({ key: r.key, ok: gradeMC(r.reply, r.answer) === 1, reply: r.reply })),
-    fact_tpr: tpr, fact_tnr: tnr, fact_balanced_accuracy: ba,
-    pair_same_rate: psr, pair_diff_rate: pdr, pair_balanced_accuracy: pairBa,
-    resume_asked_back: askedBack, resume_reply: open ? open.reply : null,
-    rows
-  };
-  console.log(` 完成（${errs.length} 个调用错误）`);
+  results.arms[arm] = scoreRows(rows, typeof ctx === 'function' ? `逐题≤${B}` : ctx.length, need.length);
+  console.log(` 完成（${results.arms[arm].errors} 个调用错误，修复 ${need.length} 条）`);
 }
 
 // ─────────────────────────── 报告 ───────────────────────────
@@ -586,6 +688,17 @@ for (const arm of ARMS) {
     `   ${a.no_answer}/${a.errors}`
   );
 }
+const leaks = leakCheck(results.arms['none']);
+if (leaks.length) {
+  console.log(`⚠ 地板线异常：空上下文臂在 ${leaks.map(l => `${l.metric}=${(l.none * 100).toFixed(1)}%（瞎猜 ${(l.chance * 100).toFixed(0)}%）`).join('、')}`);
+  console.log(`  没有上下文却明显高于瞎猜，只有一种解释：**这些题泄题**（光看选项就能猜）。这几个指标不能用来下结论。`);
+} else if (results.arms['none']) {
+  console.log(`✔ 地板线正常：空上下文臂在 n≥${MIN_N} 的指标上均贴近瞎猜线，题目未泄题。`);
+}
+const small = tooSmall(results.arms[ARMS[0]]);
+if (small.length) console.log(`ℹ 题量不足（n<${MIN_N}）故不作结论的指标：${small.join('、')} —— 列在表里只为透明，别拿它比高低。`);
+const rep = ARMS.filter(a => results.arms[a].repaired > 0);
+if (rep.length) console.log(`ℹ 截断修复：${rep.map(a => `${a}:${results.arms[a].repaired}`).join(' ')} 条曾触 max_tokens(${MAXTOK})，已用 ${MAXTOK * 3} 重跑补齐（temperature=0，等价于全程用大 cap）。`);
 const trunc = ARMS.filter(a => results.arms[a].truncated > 0);
 if (trunc.length)
   console.log(`⚠ 有 ${trunc.map(a => `${a}:${results.arms[a].truncated}`).join(' ')} 条 finish_reason=length —— 是 --max-tokens(${MAXTOK}) 截断，不是模型答错。` +
