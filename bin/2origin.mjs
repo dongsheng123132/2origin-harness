@@ -14,6 +14,7 @@ import { createState, saveState, readState, findNewestState, addFact, addLearnin
 import { buildContext } from '../lib/northbridge.js';
 import { southbridge } from '../lib/southbridge.js';
 import { verify } from '../lib/verify.js';
+import { buildBundle } from '../lib/bundle.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(here, '..');
@@ -50,6 +51,11 @@ function main() {
       const sb = southbridge(ROOT);
       const res = sb({ verb: mode === 'append' ? 'file.append' : 'file.write', relpath, content, mode });
       console.log(JSON.stringify(res, null, 2));
+      break;
+    }
+    case 'bundle': {
+      const b = buildBundle(ROOT, { budget: parseInt(opt('--budget') || '9000', 10) });
+      console.log(b.text);
       break;
     }
     case 'verify': {

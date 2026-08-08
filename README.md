@@ -44,6 +44,9 @@ node bin/2origin.mjs verify --state demo/my-task/task.origin.json
 # 5. Distill experience (candidate → verified)
 node bin/2origin.mjs learn --state demo/my-task/task.origin.json --lesson "releases need a changelog" --confidence 0.8
 node bin/2origin.mjs learn --state demo/my-task/task.origin.json --promote --lesson "releases need a changelog"
+
+# 6. Compile the full benjing bundle (SessionStart load, RFC-0005 §3.4)
+node bin/2origin.mjs bundle          # current task full + carryover, says what dropped
 ```
 
 ## Architecture (mapped to 2Origin)
