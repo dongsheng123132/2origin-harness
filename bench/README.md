@@ -4,7 +4,7 @@
 >
 > | 文件 | 是什么 | 能证明什么 |
 > |---|---|---|
-> | **`shadowwork-bench-v2.mjs`** | **真 benchmark**：真实语料 + 真实模型 + 真值取自磁盘 | 「状态优于对话流」——见 **[RESULTS-v2.md](./RESULTS-v2.md)** |
+> | **`shadowwork-bench-live.mjs`** | **真 benchmark**：真实语料 + 真实模型 + 真值取自磁盘 | 「状态优于对话流」——见 **[RESULTS-v2.md](./RESULTS-v2.md)** |
 > | `shadowwork-bench.mjs`（v0.1） | **机制单元测试**：验 `buildBundle` 不丢事实 | 只证机制通，**不**证"更有效" |
 > | `compare-bench.mjs`（v0.1） | 同上，且**对照组由脚本自己生成** | ⚠️ 其"传统不可续作"结论恒真，不构成证据 |
 >
@@ -71,8 +71,8 @@ node bench/shadowwork-bench.mjs --facts 100 --sessions 50 --budget 500000
 完整方法与结果：**[RESULTS-v2.md](./RESULTS-v2.md)**
 
 ```bash
-node bench/shadowwork-bench-v2.mjs --dry-run                        # 不花钱，只看 payload 和题
-node bench/shadowwork-bench-v2.mjs --facts 40 --mc-facts 10 --max-tokens 8000
+node bench/shadowwork-bench-live.mjs --dry-run                        # 不花钱，只看 payload 和题
+node bench/shadowwork-bench-live.mjs --facts 40 --mc-facts 10 --max-tokens 8000
 ```
 
 三条硬约束（v0.1 就是缺了这三条才不算 benchmark）：

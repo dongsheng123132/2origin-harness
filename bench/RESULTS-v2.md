@@ -9,8 +9,8 @@
 ## 跑法
 
 ```bash
-node bench/shadowwork-bench-v2.mjs --facts 40 --mc-facts 10 --max-tokens 8000
-node bench/shadowwork-bench-v2.mjs --dry-run     # 不花钱，只看 payload 和题
+node bench/shadowwork-bench-live.mjs --facts 40 --mc-facts 10 --max-tokens 8000
+node bench/shadowwork-bench-live.mjs --dry-run     # 不花钱，只看 payload 和题
 ```
 
 ## 实验设置

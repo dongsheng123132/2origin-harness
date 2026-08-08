@@ -1,0 +1,9 @@
+{
+  "note": "固定语料清单。自动发现会随着新会话/新学历漂移——今天跑的和上周跑的就不是一个实验了，分数不可比。更糟的是：正在做 benchmark 的这个会话本身会被发现进来，把分析结论泄漏进对照组。所以对照语料必须钉死。",
+  "task": "task6",
+  "transcripts": [
+    "C:/Users/ZhuanZ/.claude/projects/D--uking---ShadowOS---Harness-OS/0ce4fbd1-6e08-449f-b7a6-12838e62c6f7.jsonl",
+    "C:/Users/ZhuanZ/.claude/projects/D--uking---ShadowOS---Harness-OS/6305f7d6-2a85-4c6f-92b0-d2ede542e661.jsonl"
+  ],
+  "transcripts_why": "这两份是真正做 task6 的会话（分别 3.0MB / 2.1MB）。刻意排除 40108e1f（做 benchmark 本身的会话）——它讨论的是怎么测 task6，不是在干 task6，且含有本实验的分析结论。"
+}
