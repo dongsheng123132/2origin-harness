@@ -4,7 +4,9 @@
 
 > Model-swappable. State-persistent. Audited writes. Zero dependencies.
 
-This is a **reference implementation** of the 2Origin architecture — not a clone of any commercial harness (like U-King). It exists to prove the spec is *implementable*: anyone can clone it, point it at any model endpoint, and get a machine that resumes across sessions, survives harness/model swaps, and persists credentials.
+This is a **reference implementation** of the 2Origin architecture — not a clone of any commercial harness (like U-King). It exists to prove the spec is *implementable*: anyone can clone it, point it at any model endpoint, and get a machine that resumes across sessions, survives harness/model swaps, and persists task state.
+
+> **Terminology.** `task state` (`task.origin.json`) is the durable record of one task — state, verified facts, decisions, next steps. It is deliberately *not* called a "credential": in this repo `credential` means one thing only, the `trust.credential` / `proof_of_read` authorization token in the Trust Lane below.
 
 ## Why
 
@@ -38,7 +40,7 @@ The 2Origin spec says a computer should be *"model-swappable, state-persistent, 
 - **The 100% is open-book.** The facts are written verbatim in the bundle. This measures *whether state survives delivery intact*, not whether the model is smart. The information is in the controls' low scores, not the state arm's high one.
 - **Single model, single target task, single run.** At near-identical payload the transcript arm moved 13.3 points between two runs (60.0% → 46.7%). Small differences are unreadable without resampling and confidence intervals.
 - **The controls are ours.** Tail-truncation, a self-made summary and a hand-written lexical RAG are not mem0 / Letta / LangMem / Zep. "Beats a transcript" is the claim; "beats memory systems" is not.
-- **The corpus is this project's own credentials.** External validity is untested.
+- **The corpus is this project's own task states.** External validity is untested.
 
 **Four bugs we caught in our own scorer this round.** Nobody writes a scorer for the scorer, so we publish ours:
 
@@ -102,9 +104,9 @@ node bin/2origin.mjs bundle          # current task full + carryover, says what 
 | 2Origin layer | This repo |
 |---|---|
 | State (本境) | `lib/state.js` — task.origin read/write, **v0.2: content-hash optimistic lock + verifiable sources + actor provenance** (RFC-0005) |
-| World representation (本象) | the `task.origin.json` itself — State + Facts, not transcripts |
-| Northbridge (知) | `lib/northbridge.js` — compiles relevant state into context, not the whole disk |
-| Southbridge (行) | `lib/southbridge.js` — whitelisted, audited write; **risk-tiered (low/medium/high) + approval (auto / expect_sha256 optimistic lock / human confirm)**; status decided by post-write observation |
+| Observer (本象) | **not implemented here.** World-observation (`existsSync` / `statSync` / `createHash`) is scattered across all six `lib/*.js` files, each looking at the world its own way. The ShadowOS reference factored this into a single observer that *never receives an expectation* — an observer that accepts "what you think it should be" degrades into a confirmation-bias machine. Having no single observer is the structural cause of self-attestation defects, not a cosmetic gap |
+| Context compiler (北桥, 知) | `lib/northbridge.js` — compiles relevant state into context, not the whole disk |
+| Action kernel + channel (影核 / 南桥, 行) | `lib/southbridge.js` — whitelisted, audited write; **risk-tiered (low/medium/high) + approval (auto / expect_sha256 optimistic lock / human confirm)**; status decided by post-write observation. The *kernel* decides and acts; a *channel* (CLI, MCP) only carries the request to it, and channel parity is verified rather than assumed |
 | Verify | `lib/verify.js` — artifacts exist? facts sourced **and verifiable** (recheckSource) |
 | Learning (学堂) | `learn` — candidate → verified, one success is not a permanent truth |
 
@@ -142,10 +144,10 @@ The credential proves *you read the current content* — not "someone approved y
 Cross-harness, no binding to Claude Code / Codex:
 
 ```bash
-# On session start: compile the benjing bundle (inject credentials)
+# On session start: compile the benjing bundle (inject task state)
 node hooks/session-start.mjs    # outputs Claude Code additionalContext JSON if detected, else plain text
 
-# On session end: reconcile every credential by content_hash (no change = no write)
+# On session end: reconcile every task state by content_hash (no change = no write)
 node hooks/session-end.mjs      # [unchanged]/[written] per state file
 ```
 
