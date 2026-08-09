@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// shadowwork-bench-live.mjs — ShadowWork Bench（会打真模型的那一个），spec 0.3
+// shadowwork-bench-live.mjs — ShadowWork Bench（会打真模型的那一个），spec 0.4
 //
 // 为什么存在：v0.1（shadowwork-bench.mjs / compare-bench.mjs）测的是
 // 「buildBundle 能不能把刚写进去的东西读回来」，对照组（传统 harness）的
@@ -23,6 +23,13 @@
 //   - 加两跳题（事实↔下一步是否同属一个任务）与计数题。0.2 的题在 bundle 里
 //     是字面可抄的，2origin 臂 100% 有开卷天花板，测不出上限。
 //
+// 0.4 相对 0.3 的一处修正（还是「别打稻草人」，这次打的是自己）：
+//   - 加 mem0 臂。0.3 的三个对照臂——尾部截断、自制 summary、自写词法 RAG——
+//     全是**我们自己写的**。跟自己的实现比出来的"更有效"，第一个审稿人就会问
+//     「你怎么不跟真的 memory 系统比」。在回答这句话之前，主结论的外部效度是零。
+//     mem0（引用最多的开源 memory 层）接进来：同一份语料、同一个字节预算、
+//     同一个模型端点，逐题 search 出上下文。它的 ingest 成本照实记在对照组头上。
+//
 // 用法：
 //   node bench/shadowwork-bench-live.mjs --dry-run        # 只看 payload 和探针，不调模型
 //   node bench/shadowwork-bench-live.mjs                  # 真跑（会调模型，花钱）
@@ -34,6 +41,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -50,7 +58,7 @@ const TRANSCRIPTS = flag('--transcripts', '');       // 逗号分隔的 jsonl �
 const N_FACTS     = parseInt(flag('--facts', '40'), 10);   // 是/否 事实探针总数（真假各半）
 const N_MCFACT    = parseInt(flag('--mc-facts', '10'), 10); // 四选一「哪条是本任务的已验证事实」
 const N_PAIR      = parseInt(flag('--pairs', '32'), 10);    // 两跳题：事实↔下一步是否同属一个任务
-const ARMS        = flag('--arms', '2origin,summary,rag,transcript,transcript-10x,none').split(',').map(s => s.trim()).filter(Boolean);
+const ARMS        = flag('--arms', '2origin,mem0,summary,rag,transcript,transcript-10x,none').split(',').map(s => s.trim()).filter(Boolean);
 const MODEL       = flag('--model', '');
 const BASE        = flag('--base', '');
 const KEY         = flag('--key', process.env.DEEPSEEK_API_KEY || '');
@@ -61,6 +69,11 @@ const MAXTOK      = parseInt(flag('--max-tokens', '8000'), 10);
 const OUT         = flag('--out', path.join(here, 'results-live.json'));
 const CACHE       = path.join(here, 'cache');
 const DRY         = has('--dry-run');
+// mem0 臂（真实 memory 系统）的 python sidecar。默认用 bench 自带的 venv。
+const MEM0_PY     = flag('--mem0-python', path.join(here, '.venv-mem0/Scripts/python.exe'));
+const MEM0_CHUNK  = parseInt(flag('--mem0-chunk', '6000'), 10);   // 每次 add() 喂多少字符的对话
+const MEM0_TOPK   = parseInt(flag('--mem0-topk', '60'), 10);      // 每题检索多少条记忆（再按预算裁）
+const MEM0_MAXTOK = parseInt(flag('--mem0-max-tokens', '24000'), 10); // 抽记忆时给模型的 cap（推理模型给少了会静默丢整批）
 
 // ─────────────────── 确定性随机（不用 Math.random）───────────────────
 function lcg(seed) { let s = seed >>> 0; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296; }
@@ -548,6 +561,7 @@ const payloads = {
   'transcript-10x':  tailChars(transcriptText, B * 10),   // 给传统 10 倍预算
   'summary':         null,                                // 运行时填（可缓存）
   'rag':             (p) => retrieve(ragIndex, p.prompt, B), // 同字节预算，按题检索
+  'mem0':            null,                                // 运行时填（真实 memory 系统，逐题检索）
   'none':            ''
 };
 const ARM_NOTE = {
@@ -556,6 +570,7 @@ const ARM_NOTE = {
   'transcript-10x': '真实对话流尾部截断（10 倍预算）',
   'summary': '模型生成的摘要（模拟 /compact，等预算）',
   'rag': '按题词法检索真实对话流（等预算）',
+  'mem0': '真实 memory 系统 mem0（同语料同预算，逐题检索）',
   'none': '空上下文（地板线）'
 };
 const payloadLen = a => {
@@ -570,7 +585,7 @@ const SYSTEM_WITH = ctx =>
 const SYSTEM_NONE =
   '你是一个接手「进行到一半的任务」的助手。新会话开场没有给你任何上下文，你没有任何记忆。';
 
-console.log('═══ ShadowWork Bench · spec 0.3 · 真实语料 / 真实模型 / 客观判分 ═══');
+console.log('═══ ShadowWork Bench · spec 0.4 · 真实语料 / 真实模型 / 客观判分 ═══');
 console.log(`学历仓库 : ${REPO}`);
 console.log(`目标任务 : ${TASK}（${target.state.title || ''}）`);
 console.log(`语料     : ${states.length} 份真实学历，${states.reduce((n, s) => n + (s.state.facts || []).filter(f => f.verified).length, 0)} 条已验证事实`);
@@ -603,6 +618,8 @@ if (DRY) {
   }
   const cached = fs.existsSync(path.join(CACHE, `summary-${TASK}-${B}.txt`));
   console.log(`\nsummary 臂缓存：${cached ? '已有（重跑不再花钱）' : '未生成（真跑时会打模型生成一次并缓存）'}`);
+  const m0 = fs.existsSync(path.join(CACHE, `mem0-${TASK}-${transcriptText.length}.stats.json`));
+  console.log(`mem0 臂记忆库：${m0 ? '已建（重跑不再 ingest）' : '未建（真跑时会把整份语料喂给 mem0 建一次并缓存）'}`);
   process.exit(0);
 }
 
@@ -611,7 +628,7 @@ if (!ep.base || !ep.key || !ep.model) die('缺模型端点：给 --base/--key/--
 console.log(`模型     : ${ep.model} @ ${ep.base}\n`);
 
 const results = {
-  spec: 'shadowwork-bench/0.3', when: new Date().toISOString(),
+  spec: 'shadowwork-bench/0.4', when: new Date().toISOString(),
   repo: REPO, task: TASK, model: ep.model, base: ep.base,
   // 学历也在被别的会话实时改动。语料不能拷进公开仓库（含私人工作内容），
   // 那就至少把每份的 content_hash 记下来：这次跑的到底是哪一版，事后可辨认。
@@ -628,6 +645,58 @@ if (ARMS.includes('summary')) {
   payloads['summary'] = s.text;
   results.summary_arm = { chars: s.text.length, cached: s.cached, build_calls: s.calls };
   console.log(` ${s.cached ? '命中缓存' : `${s.calls} 次调用`}，${s.text.length} 字符`);
+}
+
+// ─── mem0 臂：真实 memory 系统（spec 0.4）───
+// 公平性四条，缺一条这个对照就不算数：同语料（字节级同一份）、同预算（B 字符）、
+// 同模型（mem0 抽记忆用的就是问答用的那个端点）、按它自己的设计喂（还原成
+// role 标注的多轮对话，不是硬塞一坨文本）。ingest 花的钱记在对照组头上。
+if (ARMS.includes('mem0')) {
+  if (!fs.existsSync(MEM0_PY)) die(`找不到 mem0 sidecar 的 python：${MEM0_PY}\n  建一次：python -m venv bench/.venv-mem0 && bench/.venv-mem0/Scripts/python -m pip install mem0ai sentence-transformers`);
+  fs.mkdirSync(CACHE, { recursive: true });
+  // 语料落盘再交给 python：这份就是 rag/transcript 臂看到的那一份，不重新渲染
+  const corpusTxt = path.join(CACHE, `corpus-${TASK}-${transcriptText.length}.txt`);
+  fs.writeFileSync(corpusTxt, transcriptText, 'utf8');
+  const store = path.join(CACHE, `mem0-${TASK}-${transcriptText.length}`);
+  const statsFile = `${store}.stats.json`;
+  const env = { ...process.env, MEM0_BASE: ep.base, MEM0_KEY: ep.key, MEM0_MODEL: ep.model };
+  const runPy = (argv, label) => {
+    const r = spawnSync(MEM0_PY, [path.join(here, 'mem0_arm.py'), ...argv], { stdio: 'inherit', env, cwd: here });
+    if (r.status !== 0) die(`mem0 ${label} 失败（退出码 ${r.status}）——不拿半成品记忆库出结论`);
+  };
+  if (fs.existsSync(statsFile)) {
+    console.log(`mem0 臂：ingest 命中缓存（删 ${path.basename(store)}* 可重建）`);
+  } else {
+    console.log(`mem0 臂：把 ${transcriptText.length} 字符真实会话记录喂给 mem0 建记忆库（打模型，只做一次并缓存）`);
+    runPy(['ingest', '--corpus', corpusTxt, '--store', store, '--chunk', String(MEM0_CHUNK),
+           '--max-tokens', String(MEM0_MAXTOK), '--stats', statsFile], 'ingest');
+  }
+  const qFile = path.join(CACHE, `mem0-queries-${TASK}.json`);
+  const pFile = path.join(CACHE, `mem0-payloads-${TASK}.json`);
+  fs.writeFileSync(qFile, JSON.stringify(probes.map((p, i) => ({ i, q: p.prompt }))), 'utf8');
+  runPy(['search', '--store', store, '--queries', qFile, '--out', pFile,
+         '--budget', String(B), '--top-k', String(MEM0_TOPK)], 'search');
+  const pj = JSON.parse(fs.readFileSync(pFile, 'utf8'));
+  const byIdx = new Map(pj.results.map(r => [r.i, r.payload || '']));
+  const idxOf = new Map(probes.map((p, i) => [p.prompt, i]));
+  const avg = pj.results.reduce((a, r) => a + (r.payload || '').length, 0) / Math.max(pj.results.length, 1);
+  const errs = pj.results.filter(r => r.error).length;
+  // 空对照组绝不许静默通过——summary 臂就是这么把一个 0 字节摘要跑成"对照"的
+  if (!(avg > 0)) die('mem0 臂逐题检索出来的 payload 全是空的，拒绝拿空对照组出结论');
+  if (errs) console.log(`⚠ mem0 检索有 ${errs} 道题报错，这几题该臂等于空上下文`);
+  payloads['mem0'] = (p) => byIdx.get(idxOf.get(p.prompt)) ?? '';
+  const st = JSON.parse(fs.readFileSync(statsFile, 'utf8'));
+  results.mem0_arm = {
+    mem0_version: st.mem0_version, embed_model: st.embed_model, embed_dims: st.embed_dims,
+    memories_in_store: pj.memories_in_store, top_k: pj.top_k,
+    avg_payload_chars: Math.round(avg), budget_chars: B, search_errors: errs,
+    ingest: { batches: st.batches, chunk_chars: st.chunk_chars, llm_calls: st.llm_calls,
+              prompt_tokens: st.prompt_tokens, completion_tokens: st.completion_tokens,
+              seconds: st.seconds, failed_batches: (st.failed_batches || []).length,
+              empty_batches: (st.empty_batches || []).length, retried_batches: st.retried_batches },
+    keep_source_language: st.keep_source_language
+  };
+  console.log(`mem0 臂：记忆库 ${pj.memories_in_store} 条，平均 payload ${Math.round(avg)} 字符（预算 ${B}）`);
 }
 
 for (const arm of ARMS) {
@@ -727,6 +796,12 @@ if (o) {
   if (t10 && o.avg_prompt_tokens && t10.avg_prompt_tokens)
     console.log(`10 倍预算对照：transcript-10x 用 ${(t10.avg_prompt_tokens / o.avg_prompt_tokens).toFixed(1)}x 输入 token，` +
                 `四选一 ${pct(t10.mc_accuracy)}、事实均衡 ${pct(t10.fact_balanced_accuracy)}`);
+  if (results.mem0_arm) {
+    const m = results.mem0_arm;
+    console.log(`注：mem0 臂建记忆库另花了 ${m.ingest.llm_calls} 次调用 / ${m.ingest.prompt_tokens} 输入 token` +
+                `（${m.ingest.batches} 批，${m.ingest.seconds}s，得 ${m.memories_in_store} 条记忆）——这笔成本同样算在对照组头上。`);
+    console.log(`    mem0 ${m.mem0_version}，embedder=${m.embed_model}（本地，因为两个可用网关都没有 embeddings 接口），平均装载 ${m.avg_payload_chars}/${m.budget_chars} 字符。`);
+  }
   if (results.summary_arm)
     console.log(`注：summary 臂的摘要另花了 ${results.summary_arm.build_calls} 次调用生成` +
                 `${results.summary_arm.cached ? '（本次命中缓存，未重复花钱）' : ''}——这笔成本算在对照组头上。`);

@@ -5,3 +5,5 @@ bench/cache/
 bench/corpus.json
 bench/results-live.bak.json
 bench/*.log
+bench/.venv-mem0/
+bench/__pycache__/
