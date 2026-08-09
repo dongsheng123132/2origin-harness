@@ -527,7 +527,11 @@ if (TRANSCRIPTS) {
   const short = tFiles.filter(t => t.bytes && fs.statSync(t.path).size < t.bytes);
   if (short.length) console.log(`⚠ ${short.length} 份会话记录比钉死的字节数还短（被截断/替换过），与历史结果不可比`);
 } else {
+  // corpus.json 不进仓库（含本机绝对路径）。没有它就退回自动发现，
+  // 但必须明说"这次的分数跨机器/跨次不可比"，而不是静默照跑。
   tFiles = discoverTranscripts(PROJECT_DIR, TASK); corpusSource = '自动发现（⚠ 会漂移，跨次不可比）';
+  console.log(`⚠ 没有 bench/corpus.json，退回自动发现。要可复现请照 bench/corpus.example.json 建一份。`);
+  console.log(`  自动发现会把「正在做 benchmark 的这个会话」也捞进对照组——那是泄题。`);
 }
 const transcriptText = renderTranscript(tFiles);
 

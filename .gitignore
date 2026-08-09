@@ -2,5 +2,6 @@
 audit.log
 node_modules/
 bench/cache/
+bench/corpus.json
 bench/results-live.bak.json
 bench/*.log

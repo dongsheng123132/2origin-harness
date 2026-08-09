@@ -1,0 +1,11 @@
+{
+  "note": "把这份复制成 bench/corpus.json 再改成你自己的路径。corpus.json 已被 .gitignore —— 它含本机绝对路径（用户名、目录结构），不该进仓库。",
+  "task": "task6",
+  "transcripts": [
+    { "path": "/absolute/path/to/.claude/projects/<your-project>/<session-a>.jsonl", "bytes": 3056194 },
+    { "path": "/absolute/path/to/.claude/projects/<your-project>/<session-b>.jsonl", "bytes": 2504087 }
+  ],
+  "bytes_why": "只读前 N 字节。会话记录文件在被写入时每几分钟就变长——不钉字节数，两次运行的对照语料就不是同一份，分数不可比。钉了字节数，同一台机器上重跑逐字节一致。",
+  "transcripts_why": "要选**真正干过这个任务**的会话。刻意排除「做 benchmark 本身」的那个会话——它讨论的是怎么测，不是在干，且含有本实验的分析结论，放进对照组就是泄题。",
+  "not_committed_why": "会话记录本身不进仓库（含私人工作内容），summary 臂的缓存（bench/cache/）也不进——它是由会话记录蒸馏出的二手产物。代价是换台机器复现不了 transcript/summary/rag 三个臂，这是自觉取舍，不是遗漏。"
+}

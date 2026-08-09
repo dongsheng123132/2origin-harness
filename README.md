@@ -56,7 +56,7 @@ node bench/shadowwork-bench-live.mjs --dry-run   # free, offline: shows the payl
 node bench/shadowwork-bench-live.mjs             # needs a model endpoint; one full run is ~4.7M input tokens
 ```
 
-`bench/corpus.json` pins each transcript by byte count, so a re-run on the same machine is byte-identical. The transcripts themselves are **not** committed — they contain private working content. That makes the transcript arms unreproducible off this machine; it is a deliberate trade, not an oversight.
+`bench/corpus.json` pins each transcript by byte count, so a re-run on the same machine is byte-identical. Neither the transcripts nor `corpus.json` itself are committed — the transcripts contain private working content, and `corpus.json` holds local absolute paths. Copy [`bench/corpus.example.json`](bench/corpus.example.json) and point it at your own sessions. The `summary` arm's cache (`bench/cache/`) is likewise ignored: it is distilled *from* those transcripts, so it inherits their sensitivity. This makes the transcript / summary / rag arms unreproducible off this machine — a deliberate trade, not an oversight, and now enforced by `.gitignore` rather than merely stated in prose.
 
 ## Core loop
 
